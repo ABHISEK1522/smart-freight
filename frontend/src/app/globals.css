@@ -1,0 +1,190 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+:root {
+  /* ═══════════════════════════════════════════════════════════════════════════
+     SMART FREIGHT — INDIAN LOGISTICS VISUAL IDENTITY & MATERIAL SYSTEM
+     Warm Parchment · Earthy Sand · Handmade Paper · Terracotta · Olive · Charcoal
+     ═══════════════════════════════════════════════════════════════════════════ */
+  
+  /* Primary Parchment & Earthy Indian Surfaces */
+  --sf-bg-primary: #EFE2CE;
+  --sf-bg-secondary: #E8D6BC;
+  --sf-surface-panel: #FAF2E4;
+  --sf-surface-elevated: #FDF7EC;
+  --sf-surface-card: #F5EBDD;
+  --sf-surface-input: #F8F1E5;
+  --sf-surface-overlay: rgba(239, 226, 206, 0.88);
+
+  /* Earth & Clay Borders */
+  --sf-border-subtle: #DCCFBC;
+  --sf-border-medium: #CBB9A2;
+  --sf-border-active: #C85A32;
+
+  /* Typography */
+  --sf-text-primary: #1F1D1A;
+  --sf-text-brown: #3D2E24;
+  --sf-text-secondary: #5C4E42;
+  --sf-text-muted: #827263;
+  --sf-text-accent: #C85A32;
+
+  /* Indian Accent Tones */
+  --sf-terracotta: #C85A32;
+  --sf-terracotta-hover: #B44E29;
+  --sf-olive: #4D6A42;
+  --sf-olive-dark: #374E2E;
+  --sf-marigold: #D49A29;
+  --sf-saffron: #D97724;
+  --sf-clay: #A86242;
+  --sf-rust: #BA4336;
+  --sf-charcoal: #1F1D1A;
+
+  /* Radii */
+  --sf-radius-sm: 6px;
+  --sf-radius-md: 10px;
+  --sf-radius-lg: 14px;
+  --sf-radius-xl: 20px;
+  --sf-radius-full: 9999px;
+}
+
+body {
+  background-color: var(--sf-bg-primary);
+  color: var(--sf-text-primary);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Custom Scrollbar in Warm Paper Styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #E8D6BC;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBB9A2;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #C85A32;
+}
+
+/* Physical Indian Paper & Tactile Depth Primitives (No Sterile White!) */
+.sf-paper-card {
+  background-color: rgba(250, 242, 228, 0.94);
+  border: 1px solid var(--sf-border-subtle);
+  border-radius: var(--sf-radius-xl);
+  color: var(--sf-text-primary);
+  box-shadow: inset 0 1px 0 rgba(255, 250, 240, 0.8), 0 2px 10px -2px rgba(80, 65, 50, 0.08);
+  backdrop-filter: blur(8px);
+}
+
+.sf-paper-card-elevated {
+  background-color: rgba(253, 247, 236, 0.96);
+  border: 1px solid var(--sf-border-medium);
+  border-radius: var(--sf-radius-lg);
+  color: var(--sf-text-primary);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 245, 0.9), 0 4px 16px -2px rgba(80, 65, 50, 0.1);
+}
+
+.sf-tactile-card {
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sf-tactile-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--sf-border-medium);
+  box-shadow: inset 0 1px 0 rgba(255, 250, 240, 0.9), 0 8px 24px -4px rgba(80, 65, 50, 0.14);
+}
+
+.sf-input-warm {
+  background-color: var(--sf-surface-input);
+  border: 1px solid var(--sf-border-subtle);
+  color: var(--sf-text-primary);
+  transition: all 0.15s ease;
+}
+.sf-input-warm:focus {
+  background-color: #FAF4EB;
+  border-color: var(--sf-terracotta);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(200, 90, 50, 0.15);
+}
+
+.sf-btn-primary {
+  background-color: var(--sf-charcoal);
+  color: #FDF7EC;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-radius: var(--sf-radius-full);
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: 0 2px 8px rgba(31, 29, 26, 0.18);
+}
+.sf-btn-primary:hover {
+  background-color: #3D2E24;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(31, 29, 26, 0.25);
+}
+.sf-btn-primary:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 4px rgba(31, 29, 26, 0.15);
+}
+
+.sf-btn-terracotta {
+  background-color: var(--sf-terracotta);
+  color: #FFFFFF;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-radius: var(--sf-radius-full);
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: 0 2px 10px rgba(200, 90, 50, 0.25);
+}
+.sf-btn-terracotta:hover {
+  background-color: var(--sf-terracotta-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(200, 90, 50, 0.32);
+}
+.sf-btn-terracotta:active {
+  transform: translateY(1px);
+}
+
+.sf-badge-olive {
+  background-color: #E6EFE2;
+  color: #2D5224;
+  border: 1px solid #B8D6B0;
+  font-family: monospace;
+  font-weight: 700;
+}
+
+.sf-badge-terracotta {
+  background-color: #F8ECE4;
+  color: #B44E29;
+  border: 1px solid #EAC8B8;
+  font-family: monospace;
+  font-weight: 700;
+}
+
+.sf-badge-marigold {
+  background-color: #FAF2DD;
+  color: #9E6C10;
+  border: 1px solid #ECD99F;
+  font-family: monospace;
+  font-weight: 700;
+}
+
+.sf-badge-sand {
+  background-color: #F2E7D5;
+  color: #5C4E42;
+  border: 1px solid #DCCFBC;
+  font-family: monospace;
+  font-weight: 700;
+}
