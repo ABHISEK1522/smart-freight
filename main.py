@@ -35,7 +35,12 @@ database.init_db()
 # Allow requests from Next.js frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -934,6 +939,12 @@ def health_check():
         "service": "Smart Freight Multi-User API",
         "database": "SQLite (smart_freight.db)",
     }
+
+
+@app.get("/api/health")
+def api_health_check():
+    """Alias for /health endpoint."""
+    return health_check()
 
 
 # ---------------------------------------------------------------------------

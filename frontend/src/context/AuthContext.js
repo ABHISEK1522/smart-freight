@@ -35,11 +35,27 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, []);
 
-  const login = async (email, password) => {
+  const login = async (emailArg, passwordArg) => {
+    let email, password;
+    if (emailArg && typeof emailArg === "object") {
+      email = emailArg.email ?? "";
+      password = emailArg.password ?? "";
+    } else {
+      email = emailArg;
+      password = passwordArg;
+    }
+
+    const safeEmail = String(email ?? "").trim();
+    const safePassword = String(password ?? "");
+
+    if (!safeEmail || !safePassword) {
+      throw new Error("Email and password are required");
+    }
+
     const res = await fetch(`${API_BASE_URL}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim(), password }),
+      body: JSON.stringify({ email: safeEmail, password: safePassword }),
     });
 
     if (!res.ok) {
@@ -52,15 +68,51 @@ export function AuthProvider({ children }) {
     setUser(data.user);
     localStorage.setItem("smart_freight_token", data.token);
     localStorage.setItem("smart_freight_user", JSON.stringify(data.user));
-    return data.user;
+    return {
+      ...data.user,
+      success: true,
+      user: data.user,
+      token: data.token,
+    };
   };
 
-  const register = async (name, email, password, role = "consumer", driverMeta = {}) => {
+  const register = async (nameOrData, emailArg, passwordArg, roleArg = "consumer", driverMetaArg = {}) => {
+    let name, email, password, role, driverMeta;
+    if (nameOrData && typeof nameOrData === "object") {
+      name = nameOrData.name ?? nameOrData.fullName ?? "";
+      email = nameOrData.email ?? "";
+      password = nameOrData.password ?? "";
+      role = nameOrData.role ?? "consumer";
+      const { name: _n, fullName: _fn, email: _e, password: _p, role: _r, ...rest } = nameOrData;
+      driverMeta = rest;
+    } else {
+      name = nameOrData;
+      email = emailArg;
+      password = passwordArg;
+      role = roleArg;
+      driverMeta = driverMetaArg || {};
+    }
+
+    const safeName = String(name ?? "").trim();
+    const safeEmail = String(email ?? "").trim();
+    const safePassword = String(password ?? "");
+    const safeRole = String(role ?? "consumer").trim() || "consumer";
+
+    if (!safeName) {
+      throw new Error("Full name is required");
+    }
+    if (!safeEmail) {
+      throw new Error("Email address is required");
+    }
+    if (!safePassword) {
+      throw new Error("Password is required");
+    }
+
     const payload = {
-      name: name.trim(),
-      email: email.trim(),
-      password,
-      role,
+      name: safeName,
+      email: safeEmail,
+      password: safePassword,
+      role: safeRole,
       ...driverMeta,
     };
 
@@ -80,7 +132,12 @@ export function AuthProvider({ children }) {
     setUser(data.user);
     localStorage.setItem("smart_freight_token", data.token);
     localStorage.setItem("smart_freight_user", JSON.stringify(data.user));
-    return data.user;
+    return {
+      ...data.user,
+      success: true,
+      user: data.user,
+      token: data.token,
+    };
   };
 
   const logout = () => {

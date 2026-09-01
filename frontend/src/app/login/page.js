@@ -65,54 +65,84 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
 
+    const safeName = String(name ?? "").trim();
+    const safeEmail = String(email ?? "").trim();
+    const safePassword = String(password ?? "");
+    const safeConfirmPassword = String(confirmPassword ?? "");
+    const safeRole = String(selectedRole ?? "consumer").trim() || "consumer";
+    const safeLicenseNumber = String(licenseNumber ?? "").trim();
+    const safeVehicleId = String(vehicleId ?? "").trim();
+
     try {
       if (isRegister) {
-        if (password !== confirmPassword) {
-          setError("Passwords do not match");
+        if (!safeName) {
+          setError("Please enter your full name.");
           setLoading(false);
           return;
         }
 
-        const registrationData = {
-          name,
-          email,
-          password,
-          role: selectedRole,
-          ...(selectedRole === "driver" && {
-            license_number: licenseNumber || "IND-OR-2026-8841",
-            vehicle_id: vehicleId || "OD-02-TC-9941",
-          }),
-        };
+        if (!safeEmail) {
+          setError("Please enter a valid email address.");
+          setLoading(false);
+          return;
+        }
 
-        const res = await register(registrationData);
-        if (res.success) {
-          router.push(selectedRole === "driver" ? "/driver" : "/");
+        if (!safePassword || safePassword.length < 6) {
+          setError("Password must be at least 6 characters long.");
+          setLoading(false);
+          return;
+        }
+
+        if (safePassword !== safeConfirmPassword) {
+          setError("Passwords do not match.");
+          setLoading(false);
+          return;
+        }
+
+        const driverMeta = safeRole === "driver" ? {
+          license_number: safeLicenseNumber || "IND-OR-2026-8841",
+          assigned_vehicle: safeVehicleId || "Refrigerated Van (Medium)",
+          driver_status: "Available",
+        } : {};
+
+        const res = await register(safeName, safeEmail, safePassword, safeRole, driverMeta);
+        if (res) {
+          const role = res.role || res.user?.role || safeRole;
+          router.push(role === "driver" ? "/driver" : "/");
         } else {
-          setError(res.error || "Registration failed");
+          setError("Registration failed. Please try again.");
         }
       } else {
-        const res = await login(email, password);
-        if (res.success) {
-          router.push(res.user?.role === "driver" ? "/driver" : "/");
+        if (!safeEmail || !safePassword) {
+          setError("Please enter both email and password.");
+          setLoading(false);
+          return;
+        }
+
+        const res = await login(safeEmail, safePassword);
+        if (res) {
+          const role = res.role || res.user?.role || "consumer";
+          router.push(role === "driver" ? "/driver" : "/");
         } else {
-          setError(res.error || "Invalid credentials");
+          setError("Invalid email or password.");
         }
       }
     } catch (err) {
-      setError(err.message || "An unexpected error occurred");
+      setError(err.message || "An unexpected error occurred.");
     } finally {
       setLoading(false);
     }
   };
 
   const handleDemoLogin = (role) => {
+    setError("");
     if (role === "driver") {
       setEmail("driver@smartfreight.io");
-      setPassword("driver123");
+      setPassword("password123");
       setSelectedRole("driver");
     } else {
-      setEmail("shipper@smartfreight.io");
-      setPassword("shipper123");
+      setEmail("demo@smartfreight.io");
+      setPassword("password123");
       setSelectedRole("consumer");
     }
     setIsRegister(false);
