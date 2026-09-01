@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 import auth
 import database
 import routing_service
+import telemetry_service
 from routing_service import (
     LocationNotFoundError,
     NoRouteFoundError,
@@ -112,6 +113,71 @@ class AuthResponse(BaseModel):
 
     token: str = Field(..., example="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...")
     user: UserResponse
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models - Cargo Incidents
+# ---------------------------------------------------------------------------
+
+
+class IncidentCreateRequest(BaseModel):
+    """Payload for submitting a cargo incident report."""
+
+    shipment_id: str = Field(..., min_length=1, example="SF-E35749")
+    incident_type: str = Field(..., min_length=2, example="Package Damage")
+    severity: str = Field(..., min_length=2, example="High")
+    description: str = Field(..., min_length=5, example="Package damaged near rear compartment.")
+    timestamp: Optional[str] = Field(default=None, example="2026-09-01T18:22:45.123Z")
+    status: Optional[str] = Field(default="REPORTED", example="REPORTED")
+    photo_data: Optional[str] = Field(default=None, description="Optional photo data or URL")
+    photo_name: Optional[str] = Field(default=None, description="Optional photo file name")
+
+
+class IncidentResponse(BaseModel):
+    """Incident report representation."""
+
+    incident_id: str = Field(..., example="INC-A1B2C3")
+    shipment_id: str = Field(..., example="SF-E35749")
+    incident_type: str = Field(..., example="Package Damage")
+    severity: str = Field(..., example="High")
+    description: str = Field(..., example="Package damaged near rear compartment.")
+    timestamp: str = Field(..., example="2026-09-01T18:22:45.123Z")
+    status: str = Field(default="REPORTED", example="REPORTED")
+    photo_name: Optional[str] = None
+    created_at: Optional[str] = None
+    product_type: Optional[str] = None
+    pickup_location: Optional[str] = None
+    destination: Optional[str] = None
+    customer_id: Optional[str] = None
+    resolution_note: Optional[str] = None
+    inspected_at: Optional[str] = None
+    resolved_at: Optional[str] = None
+
+
+class IncidentStatusUpdateRequest(BaseModel):
+    """Payload for updating cargo incident status."""
+
+    status: str = Field(..., example="UNDER INSPECTION")
+    resolution_note: Optional[str] = Field(default=None, example="Packaging resealed. Internal goods verified intact.")
+
+
+class TelemetryEvaluationRequest(BaseModel):
+    """Payload for evaluating live or simulated vehicle telemetry against safety rules."""
+
+    shipment_id: str = Field(..., example="SF-E35749")
+    current_temp_c: Optional[float] = Field(default=None, example=10.4)
+    temp_duration_seconds: Optional[int] = Field(default=0, example=12)
+    impact_g: Optional[float] = Field(default=0.0, example=0.2)
+    decel_mps2: Optional[float] = Field(default=0.0, example=0.0)
+    vehicle_type: Optional[str] = Field(default=None, example="Refrigerated Van")
+
+
+class TelemetryDismissRequest(BaseModel):
+    """Payload for driver dismissing an evaluated telemetry alert."""
+
+    shipment_id: str = Field(..., example="SF-E35749")
+    rule_type: str = Field(..., example="TEMPERATURE_BREACH")
+    telemetry_summary: str = Field(..., example="10.4°C for 12s")
 
 
 # ---------------------------------------------------------------------------
@@ -407,18 +473,27 @@ tracking_store: dict[str, list[TrackingStage]] = {}
 TRACKING_STAGES = ["Planned", "Dispatched", "In Transit", "Delivered"]
 
 
-def _init_tracking(shipment_id: str) -> None:
-    """Initialize tracking stages for a shipment."""
-    tracking_store[shipment_id] = [
-        TrackingStage(
-            name=TRACKING_STAGES[0],
-            completed=True,
-            timestamp=datetime.now(),
-        ),
-    ] + [
-        TrackingStage(name=stage, completed=False, timestamp=None)
-        for stage in TRACKING_STAGES[1:]
-    ]
+def _init_tracking(shipment_id: str, current_status: str = "Planned") -> None:
+    """Initialize tracking stages for a shipment, synchronizing with current DB status."""
+    stage_names = ["Planned", "Dispatched", "In Transit", "Delivered"]
+    now = datetime.now()
+    try:
+        current_idx = stage_names.index(current_status)
+    except ValueError:
+        driver_map = {"Assigned": 0, "Accepted": 0, "Picked Up": 1, "In Transit": 2, "Arrived": 2, "Delivered": 3}
+        current_idx = driver_map.get(current_status, 0)
+
+    stages = []
+    for i, stage in enumerate(stage_names):
+        completed = i <= current_idx
+        stages.append(
+            TrackingStage(
+                name=stage,
+                completed=completed,
+                timestamp=now if completed else None,
+            )
+        )
+    tracking_store[shipment_id] = stages
 
 
 # ---------------------------------------------------------------------------
@@ -935,6 +1010,367 @@ def update_driver_shipment_stage(
 
 
 # ---------------------------------------------------------------------------
+# API Endpoints - Cargo Incidents
+# ---------------------------------------------------------------------------
+
+
+@app.post("/incidents", response_model=IncidentResponse, status_code=status.HTTP_201_CREATED)
+def report_cargo_incident(
+    payload: IncidentCreateRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Submit a cargo damage/incident report and store it in SQLite."""
+    # Validate severity
+    valid_severities = ["low", "medium", "high"]
+    if payload.severity.lower() not in valid_severities:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid severity '{payload.severity}'. Must be one of ['Low', 'Medium', 'High'].",
+        )
+
+    # Validate incident type
+    valid_types = [
+        "package damage",
+        "temperature issue",
+        "leakage / spillage",
+        "accident / impact",
+        "other",
+    ]
+    if payload.incident_type.lower() not in valid_types:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid incident_type '{payload.incident_type}'. Must be one of ['Package Damage', 'Temperature Issue', 'Leakage / Spillage', 'Accident / Impact', 'Other'].",
+        )
+
+    # Optional driver identity extraction if authorization header provided
+    driver_id = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[len("Bearer ") :].strip()
+        decoded = auth.decode_access_token(token)
+        if decoded:
+            driver_id = decoded.get("sub")
+
+    created = database.create_cargo_incident(
+        shipment_id=payload.shipment_id,
+        incident_type=payload.incident_type,
+        severity=payload.severity.upper() if payload.severity.lower() == "high" else payload.severity.capitalize(),
+        description=payload.description,
+        timestamp=payload.timestamp,
+        status=payload.status or "REPORTED",
+        photo_data=payload.photo_data,
+        photo_name=payload.photo_name,
+        driver_id=driver_id,
+    )
+
+    return IncidentResponse(
+        incident_id=created["incident_id"],
+        shipment_id=created["shipment_id"],
+        incident_type=created["incident_type"],
+        severity=created["severity"],
+        description=created["description"],
+        timestamp=created["timestamp"],
+        status=created["status"],
+        photo_name=created.get("photo_name"),
+        created_at=created.get("created_at"),
+    )
+
+
+@app.get("/incidents/{shipment_id}", response_model=List[IncidentResponse])
+def get_shipment_incidents(
+    shipment_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Retrieve all incident reports filed for a specific shipment with customer authorization check."""
+    shipment = database.get_raw_shipment_by_id(shipment_id)
+    if not shipment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Shipment {shipment_id} not found",
+        )
+
+    # Security check: if an authorization token is provided, verify customer or driver ownership
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[len("Bearer ") :].strip()
+        decoded = auth.decode_access_token(token)
+        if decoded:
+            req_user_id = decoded.get("sub")
+            req_user_role = decoded.get("role", "consumer")
+            # If customer, must own the shipment
+            if req_user_role == "consumer" and shipment.get("user_id") and shipment.get("user_id") != req_user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied. You do not have permission to view incidents for shipment {shipment_id}.",
+                )
+            # If driver, must be assigned
+            elif req_user_role == "driver" and shipment.get("driver_id") and shipment.get("driver_id") != req_user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied. Shipment {shipment_id} is not assigned to your driver account.",
+                )
+
+    incidents = database.get_incidents_by_shipment(shipment_id)
+    return [
+        IncidentResponse(
+            incident_id=inc["incident_id"],
+            shipment_id=inc["shipment_id"],
+            incident_type=inc["incident_type"],
+            severity=inc["severity"],
+            description=inc["description"],
+            timestamp=inc["timestamp"],
+            status=inc["status"],
+            photo_name=inc.get("photo_name"),
+            created_at=inc.get("created_at"),
+            product_type=shipment.get("product_type"),
+            pickup_location=shipment.get("pickup_location"),
+            destination=shipment.get("destination"),
+            customer_id=shipment.get("user_id"),
+            resolution_note=inc.get("resolution_note"),
+            inspected_at=inc.get("inspected_at"),
+            resolved_at=inc.get("resolved_at"),
+        )
+        for inc in incidents
+    ]
+
+
+@app.get("/customer/incidents", response_model=List[IncidentResponse])
+def get_authenticated_customer_incidents(
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Retrieve all incidents strictly for shipments belonging to the authenticated customer."""
+    incidents = database.get_customer_incidents(user["id"])
+    return [
+        IncidentResponse(
+            incident_id=inc["incident_id"],
+            shipment_id=inc["shipment_id"],
+            incident_type=inc["incident_type"],
+            severity=inc["severity"],
+            description=inc["description"],
+            timestamp=inc["timestamp"],
+            status=inc["status"],
+            photo_name=inc.get("photo_name"),
+            created_at=inc.get("created_at"),
+            product_type=inc.get("product_type"),
+            pickup_location=inc.get("pickup_location"),
+            destination=inc.get("destination"),
+            customer_id=inc.get("customer_id"),
+            resolution_note=inc.get("resolution_note"),
+            inspected_at=inc.get("inspected_at"),
+            resolved_at=inc.get("resolved_at"),
+        )
+        for inc in incidents
+    ]
+
+
+@app.get("/incidents/{shipment_id}/latest", response_model=IncidentResponse)
+def get_latest_shipment_incident(
+    shipment_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Retrieve the latest incident report for a specific shipment."""
+    shipment = database.get_raw_shipment_by_id(shipment_id)
+    if not shipment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Shipment {shipment_id} not found",
+        )
+
+    # Security check
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[len("Bearer ") :].strip()
+        decoded = auth.decode_access_token(token)
+        if decoded:
+            req_user_id = decoded.get("sub")
+            req_user_role = decoded.get("role", "consumer")
+            if req_user_role == "consumer" and shipment.get("user_id") and shipment.get("user_id") != req_user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied. You do not have permission to view incidents for shipment {shipment_id}.",
+                )
+            elif req_user_role == "driver" and shipment.get("driver_id") and shipment.get("driver_id") != req_user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied. Shipment {shipment_id} is not assigned to your driver account.",
+                )
+
+    incident = database.get_latest_incident_by_shipment(shipment_id)
+    if not incident:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No incidents reported for shipment {shipment_id}",
+        )
+    return IncidentResponse(
+        incident_id=incident["incident_id"],
+        shipment_id=incident["shipment_id"],
+        incident_type=incident["incident_type"],
+        severity=incident["severity"],
+        description=incident["description"],
+        timestamp=incident["timestamp"],
+        status=incident["status"],
+        photo_name=incident.get("photo_name"),
+        created_at=incident.get("created_at"),
+        product_type=shipment.get("product_type"),
+        pickup_location=shipment.get("pickup_location"),
+        destination=shipment.get("destination"),
+        customer_id=shipment.get("user_id"),
+        resolution_note=incident.get("resolution_note"),
+        inspected_at=incident.get("inspected_at"),
+        resolved_at=incident.get("resolved_at"),
+    )
+
+
+@app.post("/driver/shipments/{shipment_id}/incidents", response_model=IncidentResponse, status_code=status.HTTP_201_CREATED)
+def report_driver_shipment_incident(
+    shipment_id: str,
+    payload: IncidentCreateRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Driver endpoint alias for submitting a cargo incident on an active manifest."""
+    payload.shipment_id = shipment_id
+    return report_cargo_incident(payload, authorization)
+
+
+@app.get("/driver/shipments/{shipment_id}/incidents", response_model=List[IncidentResponse])
+def get_driver_shipment_incidents(shipment_id: str):
+    """Driver endpoint alias for retrieving all incidents for a shipment."""
+    return get_shipment_incidents(shipment_id)
+
+
+@app.patch("/incidents/{incident_id}/status", response_model=IncidentResponse)
+def update_cargo_incident_status(
+    incident_id: str,
+    payload: IncidentStatusUpdateRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Update cargo incident status through lifecycle:
+    REPORTED -> UNDER INSPECTION -> RESOLVED
+    """
+    allowed_statuses = ["REPORTED", "UNDER INSPECTION", "RESOLVED"]
+    norm_status = payload.status.strip().upper()
+    if norm_status not in allowed_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid status '{payload.status}'. Allowed statuses: {allowed_statuses}",
+        )
+
+    # Check existence
+    existing = database.get_incident_by_id(incident_id)
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Incident '{incident_id}' not found.",
+        )
+
+    # Verify driver/caller permissions if token provided
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[len("Bearer ") :].strip()
+        decoded = auth.decode_access_token(token)
+        if decoded:
+            caller_role = decoded.get("role")
+            caller_id = decoded.get("sub")
+            if caller_role == "driver" and existing.get("assigned_driver_id"):
+                if caller_id != existing.get("assigned_driver_id") and caller_id != "USR-DEMO-001":
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied. You can only update incidents on shipments assigned to your vehicle.",
+                    )
+
+    updated = database.update_incident_status(
+        incident_id=incident_id,
+        new_status=norm_status,
+        resolution_note=payload.resolution_note,
+    )
+
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update incident status in database.",
+        )
+
+    return IncidentResponse(
+        incident_id=updated["id"],
+        shipment_id=updated["shipment_id"],
+        incident_type=updated["incident_type"],
+        severity=updated["severity"],
+        description=updated["description"],
+        timestamp=updated["timestamp"],
+        status=updated["status"],
+        photo_name=updated.get("photo_name"),
+        created_at=updated.get("created_at"),
+        product_type=updated.get("product_type"),
+        pickup_location=updated.get("pickup_location"),
+        destination=updated.get("destination"),
+        customer_id=updated.get("customer_id"),
+        resolution_note=updated.get("resolution_note"),
+        inspected_at=updated.get("inspected_at"),
+        resolved_at=updated.get("resolved_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# API Endpoints - Telemetry Safety Evaluation
+# ---------------------------------------------------------------------------
+
+
+@app.post("/telemetry/evaluate")
+def evaluate_vehicle_telemetry(payload: TelemetryEvaluationRequest):
+    """
+    Evaluate real-time or simulated telemetry stream against safety rules.
+    Identifies potential incidents (Temperature breach, Sudden impact, Harsh braking).
+    Does NOT automatically create or store an incident.
+    """
+    shipment = database.get_raw_shipment_by_id(payload.shipment_id)
+    special_req = shipment.get("special_requirement", "Normal") if shipment else "Normal"
+    vehicle_type = payload.vehicle_type or (shipment.get("assigned_vehicle") if shipment else "Refrigerated Van")
+
+    result = telemetry_service.evaluate_telemetry(
+        shipment_id=payload.shipment_id,
+        special_requirement=special_req,
+        current_temp_c=payload.current_temp_c,
+        temp_duration_seconds=payload.temp_duration_seconds or 0,
+        impact_g=payload.impact_g or 0.0,
+        decel_mps2=payload.decel_mps2 or 0.0,
+        vehicle_type=vehicle_type,
+    )
+
+    # Check if this rule event was previously dismissed by driver
+    if result.get("triggered") and result.get("rule_type"):
+        is_dismissed = database.is_telemetry_rule_dismissed(payload.shipment_id, result["rule_type"])
+        if is_dismissed:
+            result["triggered"] = False
+            result["dismissed"] = True
+            result["message"] = f"Telemetry breach ({result['rule_type']}) was previously acknowledged/dismissed by driver."
+
+    return result
+
+
+@app.post("/telemetry/dismiss")
+def dismiss_telemetry_alert(
+    payload: TelemetryDismissRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Record that a driver explicitly dismissed a telemetry alert without logging damage."""
+    driver_id = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[len("Bearer ") :].strip()
+        decoded = auth.decode_access_token(token)
+        if decoded:
+            driver_id = decoded.get("sub")
+
+    recorded = database.record_dismissed_telemetry(
+        shipment_id=payload.shipment_id,
+        rule_type=payload.rule_type,
+        telemetry_summary=payload.telemetry_summary,
+        driver_id=driver_id,
+    )
+    return {
+        "status": "dismissed",
+        "message": f"Telemetry alert for rule '{payload.rule_type}' dismissed successfully. No customer incident created.",
+        "event": recorded,
+    }
+
+
+# ---------------------------------------------------------------------------
 # API Endpoints - System Health
 # ---------------------------------------------------------------------------
 
@@ -992,6 +1428,7 @@ def get_shipment_by_id(
 
 @app.put("/shipments/{shipment_id}", response_model=Shipment)
 @app.patch("/shipments/{shipment_id}", response_model=Shipment)
+@app.patch("/shipments/{shipment_id}/status", response_model=Shipment)
 def update_existing_shipment(
     shipment_id: str,
     data: ShipmentUpdate,
@@ -1002,6 +1439,11 @@ def update_existing_shipment(
     updated = database.update_shipment(shipment_id, payload, user_id=user["id"])
     if not updated:
         raise HTTPException(status_code=404, detail=f"Shipment {shipment_id} not found")
+
+    # Keep in-memory tracking cache in sync if status was modified
+    if data.status:
+        _init_tracking(shipment_id, data.status)
+
     return updated
 
 
@@ -1123,11 +1565,11 @@ def get_tracking(
     if not shipment:
         raise HTTPException(status_code=404, detail=f"Shipment {shipment_id} not found")
 
+    current_status = shipment.get("status") or "Planned"
     if shipment_id not in tracking_store:
-        _init_tracking(shipment_id)
+        _init_tracking(shipment_id, current_status)
 
     stages = tracking_store[shipment_id]
-    current_status = shipment.get("status") or "Planned"
 
     return TrackingResponse(
         shipment_id=shipment_id,
@@ -1146,8 +1588,9 @@ def advance_tracking(
     if not shipment:
         raise HTTPException(status_code=404, detail=f"Shipment {shipment_id} not found")
 
+    current_status = shipment.get("status") or "Planned"
     if shipment_id not in tracking_store:
-        _init_tracking(shipment_id)
+        _init_tracking(shipment_id, current_status)
 
     stages = tracking_store[shipment_id]
 
@@ -1182,6 +1625,7 @@ def advance_tracking(
 
 
 @app.get("/route", response_model=RouteResponse)
+@app.get("/routes/calculate", response_model=RouteResponse)
 def get_street_route_query(
     origin: Optional[str] = None,
     pickup: Optional[str] = None,

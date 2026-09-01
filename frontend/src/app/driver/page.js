@@ -22,7 +22,14 @@ import {
   Package,
   Check,
   Snowflake,
+  AlertTriangle,
 } from "lucide-react";
+import CargoIncidentModal from "@/components/CargoIncidentModal";
+import DriverIncidentCard from "@/components/DriverIncidentCard";
+import DriverTelemetryAlert from "@/components/DriverTelemetryAlert";
+import DriverTelemetrySimulator from "@/components/DriverTelemetrySimulator";
+import { getShipmentIncidents } from "@/services/incidentService";
+import { evaluateTelemetry, dismissTelemetryAlert } from "@/services/telemetryService";
 
 // Dynamic Imports
 const StreetRouteMap = dynamic(() => import("@/components/StreetRouteMap"), {
@@ -67,6 +74,111 @@ export default function DriverDashboardPage() {
   const [statusError, setStatusError] = useState("");
   const [confirmingAction, setConfirmingAction] = useState(null);
   const [currentTime, setCurrentTime] = useState("");
+
+  // Cargo Incident Reporting State
+  const [isIncidentModalOpen, setIsIncidentModalOpen] = useState(false);
+  const [reportedIncidents, setReportedIncidents] = useState([]);
+
+  // Telemetry & Safety Detection State
+  const [currentTelemetry, setCurrentTelemetry] = useState({
+    currentTempC: 4.2,
+    tempDurationSeconds: 0,
+    impactG: 0.2,
+    decelMps2: 0.0,
+  });
+  const [activeTelemetryAlert, setActiveTelemetryAlert] = useState(null);
+  const [prefillIncidentData, setPrefillIncidentData] = useState(null);
+  const [dismissedRules, setDismissedRules] = useState({});
+
+  // Evaluate Telemetry Stream
+  useEffect(() => {
+    let isMounted = true;
+    if (!activeShipment?.id) {
+      setActiveTelemetryAlert(null);
+      return;
+    }
+
+    evaluateTelemetry(
+      {
+        shipmentId: activeShipment.id,
+        currentTempC: currentTelemetry.currentTempC,
+        tempDurationSeconds: currentTelemetry.tempDurationSeconds,
+        impactG: currentTelemetry.impactG,
+        decelMps2: currentTelemetry.decelMps2,
+        vehicleType: driverProfile?.assigned_vehicle || "Refrigerated Van",
+      },
+      getAuthHeaders ? getAuthHeaders() : {}
+    ).then((result) => {
+      if (!isMounted) return;
+      if (result && result.triggered) {
+        if (dismissedRules[result.rule_type]) {
+          setActiveTelemetryAlert(null);
+          return;
+        }
+        const now = new Date();
+        const detectedTime =
+          now.toLocaleTimeString("en-IN", {
+            timeZone: "Asia/Kolkata",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          }) + " IST";
+        setActiveTelemetryAlert({
+          ...result,
+          detected_at: detectedTime,
+        });
+      } else {
+        setActiveTelemetryAlert(null);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentTelemetry, activeShipment, dismissedRules]);
+
+  const handleConfirmTelemetryIncident = (alertData) => {
+    setPrefillIncidentData({
+      shipmentId: alertData.shipment_id,
+      incidentType: alertData.suggested_incident_type || "Package Damage",
+      severity: alertData.severity || "Medium",
+      description: alertData.suggested_description || "",
+      source: "AUTOMATIC_TELEMETRY",
+    });
+    setIsIncidentModalOpen(true);
+  };
+
+  const handleDismissTelemetryAlert = async (alertData) => {
+    try {
+      await dismissTelemetryAlert(
+        {
+          shipmentId: alertData.shipment_id,
+          ruleType: alertData.rule_type,
+          telemetrySummary: alertData.message || "Dismissed by driver",
+        },
+        getAuthHeaders ? getAuthHeaders() : {}
+      );
+    } catch (err) {
+      console.error("Failed to dismiss alert:", err);
+    }
+    setDismissedRules((prev) => ({ ...prev, [alertData.rule_type]: true }));
+    setActiveTelemetryAlert(null);
+  };
+
+  // Fetch incidents directly from FastAPI whenever active shipment changes
+  useEffect(() => {
+    let isMounted = true;
+    if (activeShipment?.id) {
+      getShipmentIncidents(activeShipment.id).then((incidents) => {
+        if (isMounted) setReportedIncidents(incidents);
+      });
+    } else {
+      setReportedIncidents([]);
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [activeShipment]);
 
   // Live IST Clock
   useEffect(() => {
@@ -130,7 +242,7 @@ export default function DriverDashboardPage() {
     setRouteError(null);
     try {
       const res = await fetch(
-        `${API_BASE_URL}/routes/calculate?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}`
+        `${API_BASE_URL}/route?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}`
       );
       if (res.ok) {
         const data = await res.json();
@@ -468,11 +580,105 @@ export default function DriverDashboardPage() {
                     </div>
 
                     <div className="flex items-center gap-3">
-                      <span className="text-[10px] text-[#8A7E70] uppercase font-mono font-bold">STAGE:</span>
-                      <span className="text-xs font-bold px-3 py-1 rounded-full border border-[#F5CABA] bg-[#FDF0EA] text-[#C85A32] font-mono">
-                        {activeShipment.status?.toUpperCase() || "ASSIGNED"}
-                      </span>
+                      <button
+                        onClick={() => {
+                          setPrefillIncidentData(null);
+                          setIsIncidentModalOpen(true);
+                        }}
+                        className="px-3.5 py-1.5 bg-[#FDF0EA] hover:bg-[#FBE3D8] text-[#C85A32] border border-[#F5CABA] rounded-full text-xs font-mono font-bold tracking-wider uppercase transition-all inline-flex items-center gap-1.5 cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98]"
+                        title="Report cargo damage, spillage, or temperature breach"
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5 text-[#C85A32]" />
+                        <span>REPORT INCIDENT</span>
+                      </button>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-[#8A7E70] uppercase font-mono font-bold hidden sm:inline">STAGE:</span>
+                        <span className="text-xs font-bold px-3 py-1 rounded-full border border-[#F5CABA] bg-[#FDF0EA] text-[#C85A32] font-mono">
+                          {activeShipment.status?.toUpperCase() || "ASSIGNED"}
+                        </span>
+                      </div>
                     </div>
+                  </div>
+
+                  {/* POTENTIAL TELEMETRY INCIDENT ALERT BANNER */}
+                  {activeTelemetryAlert && (
+                    <div className="p-4 sm:p-6 bg-[#FDFBF7] border-b border-[#E2D5C3]">
+                      <DriverTelemetryAlert
+                        alert={activeTelemetryAlert}
+                        onConfirmIncident={handleConfirmTelemetryIncident}
+                        onDismiss={handleDismissTelemetryAlert}
+                      />
+                    </div>
+                  )}
+
+                  {/* Reported Incidents & Status Lifecycle Manager */}
+                  {reportedIncidents.length > 0 && (
+                    <div className="p-4 sm:p-6 bg-[#FDFBF7] border-b border-[#E2D5C3] space-y-3 font-mono">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-xs font-bold text-[#1F1D1A]">
+                          <AlertTriangle className="w-4 h-4 text-[#C85A32]" />
+                          <span className="uppercase tracking-wider">
+                            ACTIVE CARGO INCIDENTS ({reportedIncidents.length})
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setPrefillIncidentData(null);
+                            setIsIncidentModalOpen(true);
+                          }}
+                          className="text-xs font-bold text-[#C85A32] hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          <span>+ File New Incident</span>
+                        </button>
+                      </div>
+
+                      <div className="space-y-3">
+                        {reportedIncidents.map((inc) => (
+                          <DriverIncidentCard
+                            key={inc.incident_id || inc.id}
+                            incident={inc}
+                            authHeaders={getAuthHeaders ? getAuthHeaders() : {}}
+                            onStatusUpdated={(updated) => {
+                              setReportedIncidents((prev) =>
+                                prev.map((item) =>
+                                  (item.incident_id || item.id) === (updated.incident_id || updated.id)
+                                    ? updated
+                                    : item
+                                )
+                              );
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Safety Sensor Cockpit & Demo Telemetry Test Controls */}
+                  <div className="p-4 sm:p-6 bg-[#FDFBF7] border-b border-[#E2D5C3]">
+                    <DriverTelemetrySimulator
+                      currentTelemetry={currentTelemetry}
+                      onApplySimulation={(newTelemetry) => {
+                        // Reset dismissal of the simulated rule so test runs afresh
+                        if (newTelemetry.label?.includes("Temperature")) {
+                          setDismissedRules((prev) => ({ ...prev, TEMPERATURE_BREACH: false }));
+                        } else if (newTelemetry.label?.includes("Impact")) {
+                          setDismissedRules((prev) => ({ ...prev, SUDDEN_IMPACT: false }));
+                        } else if (newTelemetry.label?.includes("Braking")) {
+                          setDismissedRules((prev) => ({ ...prev, HARSH_BRAKING: false }));
+                        }
+                        setCurrentTelemetry(newTelemetry);
+                      }}
+                      onResetToBaseline={() => {
+                        setCurrentTelemetry({
+                          currentTempC: 4.2,
+                          tempDurationSeconds: 0,
+                          impactG: 0.2,
+                          decelMps2: 0.0,
+                        });
+                        setActiveTelemetryAlert(null);
+                      }}
+                    />
                   </div>
 
                   {/* Operational Telemetry Strip */}
@@ -570,29 +776,41 @@ export default function DriverDashboardPage() {
                             <div className="text-xs text-[#5C5349] font-mono">
                               Current Status: <strong className="text-[#1F1D1A]">{activeShipment.status || "Assigned"}</strong>. Ready for next operational milestone:
                             </div>
-                            <button
-                              onClick={() => {
-                                if (primaryAction.requiresConfirm) {
-                                  setConfirmingAction(primaryAction.target);
-                                } else {
-                                  executeStatusAdvance(primaryAction.target);
-                                }
-                              }}
-                              disabled={updatingStatus}
-                              className="px-6 py-3 rounded-full text-xs font-mono font-bold uppercase tracking-wider transition-all inline-flex items-center gap-2 cursor-pointer disabled:opacity-50 bg-[#1F1D1A] hover:bg-[#3D352E] text-[#FDFBF7] shadow-sm active:scale-[0.98]"
-                            >
-                              {updatingStatus ? (
-                                <>
-                                  <RefreshCw className="w-4 h-4 animate-spin text-[#C85A32]" />
-                                  <span>Syncing Status...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <span>{primaryAction.label}</span>
-                                  <ArrowRight className="w-4 h-4 text-[#C85A32]" />
-                                </>
-                              )}
-                            </button>
+                            <div className="flex flex-wrap items-center gap-2.5">
+                              <button
+                                type="button"
+                                onClick={() => setIsIncidentModalOpen(true)}
+                                className="px-4 py-3 rounded-full text-xs font-mono font-bold uppercase tracking-wider transition-all inline-flex items-center gap-1.5 cursor-pointer bg-[#FDF0EA] hover:bg-[#FBE3D8] text-[#C85A32] border border-[#F5CABA] active:scale-[0.98]"
+                                title="Report cargo damage or issue"
+                              >
+                                <AlertTriangle className="w-3.5 h-3.5 text-[#C85A32]" />
+                                <span>REPORT DAMAGE</span>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  if (primaryAction.requiresConfirm) {
+                                    setConfirmingAction(primaryAction.target);
+                                  } else {
+                                    executeStatusAdvance(primaryAction.target);
+                                  }
+                                }}
+                                disabled={updatingStatus}
+                                className="px-6 py-3 rounded-full text-xs font-mono font-bold uppercase tracking-wider transition-all inline-flex items-center gap-2 cursor-pointer disabled:opacity-50 bg-[#1F1D1A] hover:bg-[#3D352E] text-[#FDFBF7] shadow-sm active:scale-[0.98]"
+                              >
+                                {updatingStatus ? (
+                                  <>
+                                    <RefreshCw className="w-4 h-4 animate-spin text-[#C85A32]" />
+                                    <span>Syncing Status...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>{primaryAction.label}</span>
+                                    <ArrowRight className="w-4 h-4 text-[#C85A32]" />
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <div className="p-4 bg-[#FDF0EA] border border-[#F5CABA] rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-sm">
@@ -680,6 +898,23 @@ export default function DriverDashboardPage() {
           </div>
         </main>
       </div>
+
+      {/* CARGO INCIDENT REPORTING MODAL */}
+      <CargoIncidentModal
+        isOpen={isIncidentModalOpen}
+        onClose={() => {
+          setIsIncidentModalOpen(false);
+          setPrefillIncidentData(null);
+        }}
+        activeShipment={activeShipment}
+        authHeaders={getAuthHeaders ? getAuthHeaders() : {}}
+        prefillData={prefillIncidentData}
+        onIncidentReported={(newIncident) => {
+          setReportedIncidents((prev) => [newIncident, ...prev]);
+          setActiveTelemetryAlert(null);
+          setPrefillIncidentData(null);
+        }}
+      />
     </div>
   );
 }

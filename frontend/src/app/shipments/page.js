@@ -33,13 +33,14 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
+import CustomerIncidentNotification from "@/components/CustomerIncidentNotification";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const STATUS_STAGES = ["Planned", "Dispatched", "In Transit", "Delivered"];
 
 export default function MyShipmentsPage() {
-  const { user, getAuthHeaders, isAuthenticated } = useAuth();
+  const { user, getAuthHeaders, isAuthenticated, loading: authLoading } = useAuth();
   const [shipments, setShipments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -91,8 +92,10 @@ export default function MyShipmentsPage() {
   };
 
   useEffect(() => {
-    fetchShipments();
-  }, []);
+    if (!authLoading) {
+      fetchShipments();
+    }
+  }, [authLoading, user]);
 
   const handleDeleteShipment = async (id, e) => {
     e.stopPropagation();
@@ -203,6 +206,9 @@ export default function MyShipmentsPage() {
                 <span>{actionSuccessMsg}</span>
               </div>
             )}
+
+            {/* REAL-TIME CARGO INCIDENT NOTIFICATION AREA (POLLING) */}
+            <CustomerIncidentNotification />
 
             {/* VIEW 1: SHIPMENTS LIST VIEW */}
             {viewMode === "list" && (
@@ -394,6 +400,9 @@ export default function MyShipmentsPage() {
                   </div>
 
                   <div className="p-6 space-y-6">
+                    {/* Active Shipment Incident Notification (if any) */}
+                    <CustomerIncidentNotification activeShipmentId={activeShipment.id} />
+
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 font-mono text-xs">
                       <div className="p-3.5 bg-[#FDFBF7] rounded-xl border border-[#E2D5C3] shadow-xs">
                         <span className="text-[8px] text-[#8A7E70] uppercase tracking-wider block font-bold">PRODUCT TYPE</span>

@@ -28,6 +28,7 @@ const ConsumerVectorStory = dynamic(
 );
 
 import { useAuth } from "@/context/AuthContext";
+import CustomerIncidentNotification from "@/components/CustomerIncidentNotification";
 import {
   PackagePlus,
   Truck,
@@ -840,6 +841,11 @@ export default function DispatchPlannerPage() {
               <div className="text-xl font-black text-[#1F1D1A] mt-1">04.2°C</div>
               <span className="text-[9px] text-[#4D6A42] font-bold mt-0.5">ACTIVE CHILLER CALIBRATED</span>
             </div>
+          </div>
+
+          {/* REAL-TIME CARGO INCIDENT NOTIFICATION AREA (POLLING) */}
+          <div className="max-w-5xl mx-auto">
+            <CustomerIncidentNotification />
           </div>
 
           {/* DEDICATED CONSUMER LOGISTICS VECTOR SCROLL STORY */}
