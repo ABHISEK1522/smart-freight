@@ -6,6 +6,7 @@ import Sidebar from "@/components/Sidebar";
 import VehicleIllustration from "@/components/VehicleIllustration";
 import SmartFreightRoute from "@/components/ui/SmartFreightRoute";
 import SmartFreightPageHeader from "@/components/ui/SmartFreightPageHeader";
+import DamageRiskSection from "@/components/DamageRiskSection";
 import {
   ClipboardList,
   Plus,
@@ -33,14 +34,13 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
-import CustomerIncidentNotification from "@/components/CustomerIncidentNotification";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const STATUS_STAGES = ["Planned", "Dispatched", "In Transit", "Delivered"];
 
 export default function MyShipmentsPage() {
-  const { user, getAuthHeaders, isAuthenticated, loading: authLoading } = useAuth();
+  const { user, getAuthHeaders, isAuthenticated } = useAuth();
   const [shipments, setShipments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -53,6 +53,7 @@ export default function MyShipmentsPage() {
   const [viewMode, setViewMode] = useState("list");
   const [activeShipment, setActiveShipment] = useState(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [shipmentIncidents, setShipmentIncidents] = useState([]);
 
   useEffect(() => {
     const updateTime = () => {
@@ -71,6 +72,20 @@ export default function MyShipmentsPage() {
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  const fetchShipmentIncidents = async (shipmentId) => {
+    if (!shipmentId) return;
+    try {
+      const headers = getAuthHeaders ? getAuthHeaders() : { "Content-Type": "application/json" };
+      const res = await fetch(`${API_BASE_URL}/incidents/${shipmentId}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setShipmentIncidents(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch shipment incidents:", err);
+    }
+  };
 
   const fetchShipments = async () => {
     setLoading(true);
@@ -92,10 +107,14 @@ export default function MyShipmentsPage() {
   };
 
   useEffect(() => {
-    if (!authLoading) {
-      fetchShipments();
-    }
-  }, [authLoading, user]);
+    fetchShipments();
+  }, []);
+
+  const handleInspectShipment = (shipment) => {
+    setActiveShipment(shipment);
+    setViewMode("details");
+    fetchShipmentIncidents(shipment.id);
+  };
 
   const handleDeleteShipment = async (id, e) => {
     e.stopPropagation();
@@ -207,9 +226,6 @@ export default function MyShipmentsPage() {
               </div>
             )}
 
-            {/* REAL-TIME CARGO INCIDENT NOTIFICATION AREA (POLLING) */}
-            <CustomerIncidentNotification />
-
             {/* VIEW 1: SHIPMENTS LIST VIEW */}
             {viewMode === "list" && (
               <div className="space-y-6">
@@ -260,10 +276,7 @@ export default function MyShipmentsPage() {
                     {filteredShipments.map((s) => (
                       <div
                         key={s.id}
-                        onClick={() => {
-                          setActiveShipment(s);
-                          setViewMode("details");
-                        }}
+                        onClick={() => handleInspectShipment(s)}
                         className="p-5 bg-[#FAF5EC] hover:bg-[#FAF4E8] border border-[#E2D5C3] hover:border-[#C85A32] rounded-2xl shadow-sm transition-all duration-150 cursor-pointer relative flex flex-col justify-between space-y-4 group"
                       >
                         <div>
@@ -400,9 +413,6 @@ export default function MyShipmentsPage() {
                   </div>
 
                   <div className="p-6 space-y-6">
-                    {/* Active Shipment Incident Notification (if any) */}
-                    <CustomerIncidentNotification activeShipmentId={activeShipment.id} />
-
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 font-mono text-xs">
                       <div className="p-3.5 bg-[#FDFBF7] rounded-xl border border-[#E2D5C3] shadow-xs">
                         <span className="text-[8px] text-[#8A7E70] uppercase tracking-wider block font-bold">PRODUCT TYPE</span>
@@ -438,6 +448,16 @@ export default function MyShipmentsPage() {
                         destination={activeShipment.destination}
                         temp={activeShipment.special_requirement === "Refrigerated" ? "04.2°C" : "AMBIENT"}
                         weight={`${activeShipment.weight_kg} KG`}
+                      />
+                    </div>
+
+                    {/* DAMAGE & CARGO RISK // MODEL 2 LEARNING PIPELINE TRANSPARENCY */}
+                    <div className="pt-2">
+                      <DamageRiskSection
+                        shipmentId={activeShipment.id}
+                        incidents={shipmentIncidents}
+                        apiBaseUrl={API_BASE_URL}
+                        getAuthHeaders={getAuthHeaders}
                       />
                     </div>
 

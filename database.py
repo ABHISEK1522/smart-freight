@@ -118,52 +118,30 @@ def init_db() -> None:
     if "user_id" not in vehicle_cols:
         cursor.execute("ALTER TABLE vehicles ADD COLUMN user_id TEXT DEFAULT 'USR-DEMO-001'")
 
-    # 4. Cargo Incidents Table
+    # 4. Cargo Incidents Table (Driver Incident Reporting & Future ML Operational Data)
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS cargo_incidents (
             id TEXT PRIMARY KEY,
             shipment_id TEXT NOT NULL,
-            driver_id TEXT DEFAULT NULL,
+            driver_id TEXT NOT NULL,
+            vehicle_id TEXT,
             incident_type TEXT NOT NULL,
             severity TEXT NOT NULL,
             description TEXT NOT NULL,
-            photo_data TEXT DEFAULT NULL,
-            photo_name TEXT DEFAULT NULL,
+            photo_name TEXT,
             timestamp TEXT NOT NULL,
             status TEXT DEFAULT 'REPORTED',
-            created_at TEXT NOT NULL
+            resolution_note TEXT,
+            inspected_at TEXT,
+            resolved_at TEXT,
+            source TEXT DEFAULT 'DRIVER_REPORT',
+            is_verified_damage INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (shipment_id) REFERENCES shipments(id)
         )
         """
     )
-    # Ensure optional timeline & resolution columns exist
-    try:
-        cursor.execute("ALTER TABLE cargo_incidents ADD COLUMN resolution_note TEXT DEFAULT NULL")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE cargo_incidents ADD COLUMN inspected_at TEXT DEFAULT NULL")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE cargo_incidents ADD COLUMN resolved_at TEXT DEFAULT NULL")
-    except Exception:
-        pass
-
-    # 5. Dismissed Telemetry Events Table
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS dismissed_telemetry_events (
-            id TEXT PRIMARY KEY,
-            shipment_id TEXT NOT NULL,
-            driver_id TEXT DEFAULT NULL,
-            rule_type TEXT NOT NULL,
-            telemetry_summary TEXT NOT NULL,
-            dismissed_at TEXT NOT NULL
-        )
-        """
-    )
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_dismissed_shipment_rule ON dismissed_telemetry_events(shipment_id, rule_type)")
 
     conn.commit()
 
@@ -937,49 +915,48 @@ def delete_vehicle(vehicle_id: str, user_id: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Cargo Incident Management
+# Cargo Incidents & Driver Damage Reporting Layer
 # ---------------------------------------------------------------------------
 
 
-def create_cargo_incident(
-    shipment_id: str,
-    incident_type: str,
-    severity: str,
-    description: str,
-    timestamp: Optional[str] = None,
-    status: str = "REPORTED",
-    photo_data: Optional[str] = None,
-    photo_name: Optional[str] = None,
-    driver_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Record a cargo incident in the SQLite database."""
+def create_cargo_incident(data: Dict[str, Any], driver_id: str) -> Dict[str, Any]:
+    """Create and persist a new cargo incident submitted by a driver."""
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    incident_id = f"INC-{uuid.uuid4().hex[:6].upper()}"
-    now_iso = datetime.now().isoformat()
-    ts = timestamp or now_iso
+    incident_id = data.get("id") or f"INC-{uuid.uuid4().hex[:8].upper()}"
+    shipment_id = data.get("shipment_id")
+    vehicle_id = data.get("vehicle_id")
+    incident_type = data.get("incident_type", "Package Damage")
+    severity = data.get("severity", "Medium")
+    description = data.get("description", "")
+    photo_name = data.get("photo_name")
+    timestamp = data.get("timestamp") or datetime.now().isoformat()
+    status = data.get("status", "REPORTED")
+    source = data.get("source", "DRIVER_REPORT")
+    created_at = datetime.now().isoformat()
 
     cursor.execute(
         """
         INSERT INTO cargo_incidents (
-            id, shipment_id, driver_id, incident_type, severity,
-            description, photo_data, photo_name, timestamp, status, created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, shipment_id, driver_id, vehicle_id, incident_type,
+            severity, description, photo_name, timestamp, status,
+            source, is_verified_damage, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
         """,
         (
             incident_id,
             shipment_id,
             driver_id,
+            vehicle_id,
             incident_type,
             severity,
             description,
-            photo_data,
             photo_name,
-            ts,
+            timestamp,
             status,
-            now_iso,
+            source,
+            created_at,
         ),
     )
     conn.commit()
@@ -987,232 +964,242 @@ def create_cargo_incident(
     cursor.execute("SELECT * FROM cargo_incidents WHERE id = ?", (incident_id,))
     row = cursor.fetchone()
     conn.close()
-
-    result = dict(row)
-    result["incident_id"] = result["id"]
-    return result
+    return _row_to_dict(row)
 
 
-def get_incidents_by_shipment(shipment_id: str) -> List[Dict[str, Any]]:
-    """Retrieve all incidents associated with a specific shipment."""
+def get_incidents_by_shipment(shipment_id: str, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieve all incidents associated with a shipment.
+    If user_id is provided, verifies that the shipment belongs to that user."""
     conn = get_db_connection()
     cursor = conn.cursor()
+
+    if user_id:
+        cursor.execute("SELECT id FROM shipments WHERE id = ? AND user_id = ?", (shipment_id, user_id))
+        if not cursor.fetchone():
+            conn.close()
+            return []
+
     cursor.execute(
         "SELECT * FROM cargo_incidents WHERE shipment_id = ? ORDER BY created_at DESC",
         (shipment_id,),
     )
     rows = cursor.fetchall()
     conn.close()
-
-    results = []
-    for r in rows:
-        d = dict(r)
-        d["incident_id"] = d["id"]
-        results.append(d)
-    return results
+    return [_row_to_dict(r) for r in rows]
 
 
-def get_latest_incident_by_shipment(shipment_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve the most recent incident associated with a shipment."""
+def get_latest_incident_by_shipment(shipment_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Retrieve the most recent incident for a shipment."""
+    incidents = get_incidents_by_shipment(shipment_id, user_id=user_id)
+    return incidents[0] if incidents else None
+
+
+def get_incident_by_id(incident_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve a single incident by ID."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM cargo_incidents WHERE shipment_id = ? ORDER BY created_at DESC LIMIT 1",
-        (shipment_id,),
-    )
-    row = cursor.fetchone()
-    conn.close()
-
-    if not row:
-        return None
-    d = dict(row)
-    d["incident_id"] = d["id"]
-    return d
-
-
-def get_raw_shipment_by_id(shipment_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a shipment record without user_id restriction for permission checks."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM shipments WHERE id = ?", (shipment_id,))
+    cursor.execute("SELECT * FROM cargo_incidents WHERE id = ?", (incident_id,))
     row = cursor.fetchone()
     conn.close()
     return _row_to_dict(row) if row else None
 
 
 def get_customer_incidents(user_id: str) -> List[Dict[str, Any]]:
-    """Retrieve all cargo incidents associated with any shipment belonging to this customer."""
+    """Retrieve all incidents reported against shipments belonging to the authenticated customer."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT 
-            i.id,
-            i.shipment_id,
-            i.driver_id,
-            i.incident_type,
-            i.severity,
-            i.description,
-            i.photo_data,
-            i.photo_name,
-            i.timestamp,
-            i.status,
-            i.resolution_note,
-            i.inspected_at,
-            i.resolved_at,
-            i.created_at,
-            s.product_type,
-            s.pickup_location,
-            s.destination,
-            s.user_id AS customer_id
-        FROM cargo_incidents i
-        JOIN shipments s ON i.shipment_id = s.id
+        SELECT ci.*, s.product_type, s.pickup_location, s.destination, s.status as shipment_status
+        FROM cargo_incidents ci
+        JOIN shipments s ON ci.shipment_id = s.id
         WHERE s.user_id = ?
-        ORDER BY i.created_at DESC
+        ORDER BY ci.created_at DESC
         """,
         (user_id,),
     )
     rows = cursor.fetchall()
     conn.close()
-
-    results = []
-    for r in rows:
-        d = dict(r)
-        d["incident_id"] = d["id"]
-        results.append(d)
-    return results
+    return [_row_to_dict(r) for r in rows]
 
 
-def get_incident_by_id(incident_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve an incident by its unique ID with shipment context."""
+def get_driver_incidents(driver_id: str) -> List[Dict[str, Any]]:
+    """Retrieve all incidents filed by or assigned to the authenticated driver."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT 
-            i.*,
-            s.product_type,
-            s.pickup_location,
-            s.destination,
-            s.user_id AS customer_id,
-            s.driver_id AS assigned_driver_id
-        FROM cargo_incidents i
-        LEFT JOIN shipments s ON i.shipment_id = s.id
-        WHERE i.id = ?
+        SELECT * FROM cargo_incidents
+        WHERE driver_id = ?
+        ORDER BY created_at DESC
         """,
-        (incident_id,),
+        (driver_id,),
     )
-    row = cursor.fetchone()
+    rows = cursor.fetchall()
     conn.close()
-    if not row:
-        return None
-    d = dict(row)
-    d["incident_id"] = d["id"]
-    return d
+    return [_row_to_dict(r) for r in rows]
 
 
 def update_incident_status(
     incident_id: str,
-    new_status: str,
+    status: str,
     resolution_note: Optional[str] = None,
+    is_verified_damage: Optional[int] = None,
+    user_id: Optional[str] = None,
+    role: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Update incident status (REPORTED -> UNDER INSPECTION -> RESOLVED) and record timeline."""
-    valid_statuses = ["REPORTED", "UNDER INSPECTION", "RESOLVED"]
-    if new_status not in valid_statuses:
-        raise ValueError(f"Invalid status '{new_status}'. Allowed statuses: {valid_statuses}")
-
+    """Update incident lifecycle status (REPORTED -> UNDER INSPECTION -> RESOLVED / DISMISSED).
+    Marks is_verified_damage = 1 strictly when physical inspection confirms damage."""
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Check incident exists
-    cursor.execute("SELECT id, status, inspected_at, resolved_at FROM cargo_incidents WHERE id = ?", (incident_id,))
-    row = cursor.fetchone()
-    if not row:
+    cursor.execute("SELECT * FROM cargo_incidents WHERE id = ?", (incident_id,))
+    existing = cursor.fetchone()
+    if not existing:
         conn.close()
         return None
 
     now_iso = datetime.now().isoformat()
-    inspected_at = row["inspected_at"]
-    resolved_at = row["resolved_at"]
+    set_clauses = ["status = ?"]
+    values = [status]
 
-    if new_status == "UNDER INSPECTION" and not inspected_at:
-        inspected_at = now_iso
-    elif new_status == "RESOLVED":
-        if not resolved_at:
-            resolved_at = now_iso
-        if not inspected_at:
-            inspected_at = now_iso
+    if status == "UNDER INSPECTION":
+        set_clauses.append("inspected_at = ?")
+        values.append(now_iso)
+    elif status in ["RESOLVED", "DAMAGE VERIFIED"]:
+        set_clauses.append("resolved_at = ?")
+        values.append(now_iso)
+        # Default to 1 (verified damage) unless explicitly 0
+        v_flag = 1 if is_verified_damage is None else int(is_verified_damage)
+        set_clauses.append("is_verified_damage = ?")
+        values.append(v_flag)
+        if resolution_note:
+            set_clauses.append("resolution_note = ?")
+            values.append(resolution_note)
+    elif status in ["DISMISSED", "NO DAMAGE"]:
+        set_clauses.append("resolved_at = ?")
+        values.append(now_iso)
+        set_clauses.append("is_verified_damage = ?")
+        values.append(0)  # Dismissed/unverified incidents strictly DO NOT enter verified training dataset
+        if resolution_note:
+            set_clauses.append("resolution_note = ?")
+            values.append(resolution_note)
+    elif is_verified_damage is not None:
+        set_clauses.append("is_verified_damage = ?")
+        values.append(int(is_verified_damage))
 
-    if resolution_note:
-        cursor.execute(
-            """
-            UPDATE cargo_incidents
-            SET status = ?, resolution_note = ?, inspected_at = ?, resolved_at = ?
-            WHERE id = ?
-            """,
-            (new_status, resolution_note, inspected_at, resolved_at, incident_id),
-        )
-    else:
-        cursor.execute(
-            """
-            UPDATE cargo_incidents
-            SET status = ?, inspected_at = ?, resolved_at = ?
-            WHERE id = ?
-            """,
-            (new_status, inspected_at, resolved_at, incident_id),
-        )
-
+    values.append(incident_id)
+    sql = f"UPDATE cargo_incidents SET {', '.join(set_clauses)} WHERE id = ?"
+    cursor.execute(sql, tuple(values))
     conn.commit()
+
+    cursor.execute("SELECT * FROM cargo_incidents WHERE id = ?", (incident_id,))
+    updated_row = cursor.fetchone()
     conn.close()
-
-    return get_incident_by_id(incident_id)
-
-
-# ---------------------------------------------------------------------------
-# Telemetry Event Logging & Dismissals
-# ---------------------------------------------------------------------------
+    return _row_to_dict(updated_row)
 
 
-def record_dismissed_telemetry(
-    shipment_id: str,
-    rule_type: str,
-    telemetry_summary: str,
-    driver_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Record that a driver dismissed a potential telemetry alert."""
+def get_vehicle_damage_history(vehicle_id: str) -> Dict[str, Any]:
+    """Calculate historical incident breakdown for a vehicle from SQLite."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    event_id = f"DISM-{uuid.uuid4().hex[:6].upper()}"
-    now_iso = datetime.now().isoformat()
+
     cursor.execute(
-        """
-        INSERT INTO dismissed_telemetry_events (id, shipment_id, driver_id, rule_type, telemetry_summary, dismissed_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (event_id, shipment_id, driver_id, rule_type, telemetry_summary, now_iso),
+        "SELECT * FROM cargo_incidents WHERE vehicle_id = ? ORDER BY created_at DESC",
+        (vehicle_id,),
     )
-    conn.commit()
+    rows = cursor.fetchall()
     conn.close()
+
+    incidents = [_row_to_dict(r) for r in rows]
+    total = len(incidents)
+    high = sum(1 for i in incidents if i.get("severity") == "High")
+    med = sum(1 for i in incidents if i.get("severity") == "Medium")
+    low = sum(1 for i in incidents if i.get("severity") == "Low")
+    last_inc = incidents[0].get("timestamp") if incidents else None
+
     return {
-        "id": event_id,
-        "shipment_id": shipment_id,
-        "rule_type": rule_type,
-        "telemetry_summary": telemetry_summary,
-        "dismissed_at": now_iso,
+        "vehicle_id": vehicle_id,
+        "total_incidents": total,
+        "high_severity": high,
+        "medium_severity": med,
+        "low_severity": low,
+        "last_incident": last_inc,
+        "incidents": incidents,
     }
 
 
-def is_telemetry_rule_dismissed(shipment_id: str, rule_type: str) -> bool:
-    """Check if an alert of this rule type has already been dismissed for this shipment."""
+def get_damage_statistics() -> Dict[str, Any]:
+    """Retrieve comprehensive damage and incident statistics for fleet risk analysis."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM cargo_incidents")
+    total_incidents = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM cargo_incidents WHERE is_verified_damage = 1")
+    verified_damage_count = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM cargo_incidents WHERE status = 'REPORTED'")
+    pending_inspection = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM cargo_incidents WHERE status = 'UNDER INSPECTION'")
+    under_inspection = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM cargo_incidents WHERE status = 'RESOLVED' OR status = 'DAMAGE VERIFIED'")
+    resolved_count = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM cargo_incidents WHERE status = 'DISMISSED' OR (status = 'RESOLVED' AND is_verified_damage = 0)")
+    dismissed_count = cursor.fetchone()[0]
+
+    cursor.execute(
+        """
+        SELECT incident_type, COUNT(*) as count
+        FROM cargo_incidents
+        GROUP BY incident_type
+        """
+    )
+    by_type = {r["incident_type"]: r["count"] for r in cursor.fetchall()}
+
+    cursor.execute(
+        """
+        SELECT severity, COUNT(*) as count
+        FROM cargo_incidents
+        GROUP BY severity
+        """
+    )
+    by_severity = {r["severity"]: r["count"] for r in cursor.fetchall()}
+
+    conn.close()
+
+    return {
+        "total_incidents": total_incidents,
+        "verified_damage_count": verified_damage_count,
+        "pending_inspection": pending_inspection,
+        "under_inspection": under_inspection,
+        "resolved_count": resolved_count,
+        "dismissed_count": dismissed_count,
+        "by_type": by_type,
+        "by_severity": by_severity,
+    }
+
+
+def get_all_verified_incidents_for_ml() -> List[Dict[str, Any]]:
+    """Extract verified resolved incidents joined with shipment and vehicle metadata for ML training dataset."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id FROM dismissed_telemetry_events WHERE shipment_id = ? AND rule_type = ?",
-        (shipment_id, rule_type),
+        """
+        SELECT ci.*, s.product_type, s.weight_kg, s.pickup_location, s.destination,
+               s.special_requirement, s.selected_vehicle, s.route, v.type as vehicle_type,
+               v.capacity_kg as vehicle_capacity_kg, v.is_refrigerated as vehicle_is_refrigerated
+        FROM cargo_incidents ci
+        LEFT JOIN shipments s ON ci.shipment_id = s.id
+        LEFT JOIN vehicles v ON ci.vehicle_id = v.id
+        WHERE ci.is_verified_damage = 1
+        ORDER BY ci.created_at ASC
+        """
     )
-    row = cursor.fetchone()
+    rows = cursor.fetchall()
     conn.close()
-    return bool(row)
-
-
-
+    return [_row_to_dict(r) for r in rows]

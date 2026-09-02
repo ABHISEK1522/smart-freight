@@ -536,6 +536,7 @@ export default function StreetRouteMap({
       polylineRef.current = routeLine;
 
       // 3. Fit Map Bounds to Route with generous viewport padding
+      map.invalidateSize();
       const bounds = L.latLngBounds(latlngs);
       map.fitBounds(bounds, { padding: [45, 45], maxZoom: 14 });
 
@@ -577,6 +578,31 @@ export default function StreetRouteMap({
       });
 
       L.marker(endPt, { icon: endIcon, zIndexOffset: 500 }).addTo(map);
+
+      // 5b. Custom Intermediate Stop Markers (if multi-stop route)
+      if (routeData?.stops && Array.isArray(routeData.stops)) {
+        routeData.stops.forEach((stop, idx) => {
+          if (stop?.latitude && stop?.longitude) {
+            const stopPt = [stop.latitude, stop.longitude];
+            const stopIcon = L.divIcon({
+              className: "custom-map-marker-stop",
+              html: `
+                <div class="relative flex items-center justify-center -translate-x-1/2 -translate-y-1/2">
+                  <span class="relative w-3.5 h-3.5 rounded-full bg-[#E88C38] border-2 border-white shadow-md flex items-center justify-center">
+                    <span class="w-1.5 h-1.5 rounded-full bg-white"></span>
+                  </span>
+                  <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-[#FAF5EC]/95 text-[#1F1D1A] text-[9px] font-bold font-mono px-1.5 py-0.5 rounded border border-[#E2D5C3] whitespace-nowrap shadow-md pointer-events-none">
+                    STOP ${idx + 1}: ${stop.name}
+                  </div>
+                </div>
+              `,
+              iconSize: [16, 16],
+              iconAnchor: [8, 8],
+            });
+            L.marker(stopPt, { icon: stopIcon, zIndexOffset: 400 }).addTo(map);
+          }
+        });
+      }
 
       // 6. Setup Polished Miniature Logistics Vehicle Marker
       const { points: animPoints, pointCount } = animPathData;

@@ -12,6 +12,7 @@ Configurable via environment variables with safe defaults and fallback endpoints
 import json
 import logging
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -200,16 +201,18 @@ def geocode_location(location_name: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_osrm_route(
+def _fetch_osrm_multi_route(
     base_url: str,
-    lon1: float,
-    lat1: float,
-    lon2: float,
-    lat2: float,
+    coords_list: List[Tuple[float, float]],
 ) -> Optional[Dict[str, Any]]:
-    """Query an OSRM-compatible routing endpoint."""
-    # OSRM expects: {lon1},{lat1};{lon2},{lat2}
-    coords_path = f"{lon1},{lat1};{lon2},{lat2}"
+    """Query an OSRM-compatible routing endpoint with arbitrary waypoints.
+    coords_list is a list of (lon, lat) tuples in travel sequence.
+    """
+    if len(coords_list) < 2:
+        return None
+
+    # OSRM expects: {lon1},{lat1};{lon2},{lat2};{lon3},{lat3}...
+    coords_path = ";".join(f"{round(lon, 6)},{round(lat, 6)}" for lon, lat in coords_list)
     url = f"{base_url}/{coords_path}?overview=full&geometries=geojson&steps=false"
 
     headers = {
@@ -238,6 +241,17 @@ def _fetch_osrm_route(
     return None
 
 
+def _fetch_osrm_route(
+    base_url: str,
+    lon1: float,
+    lat1: float,
+    lon2: float,
+    lat2: float,
+) -> Optional[Dict[str, Any]]:
+    """Query an OSRM-compatible routing endpoint for 2 points."""
+    return _fetch_osrm_multi_route(base_url, [(lon1, lat1), (lon2, lat2)])
+
+
 def get_road_route(
     origin_lon: float,
     origin_lat: float,
@@ -245,8 +259,10 @@ def get_road_route(
     dest_lat: float,
     origin_name: str = "Origin",
     dest_name: str = "Destination",
+    coords_list: Optional[List[Tuple[float, float]]] = None,
 ) -> Dict[str, Any]:
     """Retrieve actual road route geometry, distance, and duration between coordinates.
+    Supports 2 coordinates or a full multi-waypoint coordinates list [(lon, lat), ...].
 
     Returns:
         dict: {
@@ -256,13 +272,15 @@ def get_road_route(
             "route_summary": Optional[str]
         }
     """
+    points = coords_list if coords_list and len(coords_list) >= 2 else [(origin_lon, origin_lat), (dest_lon, dest_lat)]
+
     # 1. Try Primary OSRM Endpoint
-    osrm_data = _fetch_osrm_route(OSRM_BASE_URL, origin_lon, origin_lat, dest_lon, dest_lat)
+    osrm_data = _fetch_osrm_multi_route(OSRM_BASE_URL, points)
 
     # 2. Try Fallback OSRM Endpoint if primary failed
     if not osrm_data and OSRM_FALLBACK_URL:
         logger.info("Attempting fallback routing provider: %s", OSRM_FALLBACK_URL)
-        osrm_data = _fetch_osrm_route(OSRM_FALLBACK_URL, origin_lon, origin_lat, dest_lon, dest_lat)
+        osrm_data = _fetch_osrm_multi_route(OSRM_FALLBACK_URL, points)
 
     if not osrm_data or not osrm_data.get("routes"):
         raise NoRouteFoundError(origin_name, dest_name)
@@ -280,12 +298,13 @@ def get_road_route(
 
     # Ensure coordinates is a list of [lon, lat] points
     if not coordinates or not isinstance(coordinates, list):
-        # Fallback to straight line if geometry was empty
-        coordinates = [[origin_lon, origin_lat], [dest_lon, dest_lat]]
+        # Fallback to direct path between waypoints if geometry was empty
+        coordinates = [[lon, lat] for lon, lat in points]
 
     # Route summary / road names (e.g. "NH16", "Grand Trunk Rd")
     legs = route.get("legs", [])
-    route_summary = legs[0].get("summary", "") if legs else route.get("weight_name", "")
+    summaries = [leg.get("summary") for leg in legs if leg.get("summary")]
+    route_summary = ", ".join(dict.fromkeys(summaries)) if summaries else (route.get("weight_name", "") or None)
 
     return {
         "distance_km": distance_km,
@@ -300,30 +319,62 @@ def get_road_route(
 # ---------------------------------------------------------------------------
 
 
-def calculate_street_route(pickup_location: str, destination: str) -> Dict[str, Any]:
+def calculate_street_route(
+    pickup_location: str,
+    destination: str,
+    stops: Optional[List[str]] = None,
+    waypoints: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """Execute complete workflow:
-    1. Geocode pickup location via Nominatim
-    2. Geocode destination via Nominatim
-    3. Calculate road route via OSRM
-    4. Return standardized route object with coordinates and geometry.
+    1. Parse and geocode all waypoints (origin, intermediate stops, destination)
+    2. Calculate continuous road route via OSRM through all waypoints
+    3. Return standardized route object with coordinates and real road geometry.
     """
-    # 1. Geocode Pickup
-    origin_geo = geocode_location(pickup_location)
+    # Parse waypoints from args or corridor notation (e.g. "Bhubaneswar → Cuttack → Kolkata")
+    location_chain: List[str] = []
 
-    # 2. Geocode Destination
-    dest_geo = geocode_location(destination)
+    if waypoints and len(waypoints) >= 2:
+        location_chain = [w.strip() for w in waypoints if w and w.strip()]
+    else:
+        # Check for arrow / delimiter notation
+        if "→" in pickup_location or "->" in pickup_location:
+            parts = [p.strip() for p in re.split(r"→|->", pickup_location) if p.strip()]
+            location_chain = parts
+        elif "→" in destination or "->" in destination:
+            parts = [pickup_location.strip()] + [p.strip() for p in re.split(r"→|->", destination) if p.strip()]
+            location_chain = parts
+        else:
+            orig = pickup_location.strip()
+            dest = destination.strip()
+            intermediate = [s.strip() for s in (stops or []) if s and s.strip()]
+            location_chain = [orig] + intermediate + [dest]
 
-    # 3. Calculate Road Route
+    if len(location_chain) < 2:
+        raise LocationNotFoundError("Route requires at least an origin and a destination.")
+
+    # Geocode all waypoints
+    geocoded_chain: List[Dict[str, Any]] = []
+    for loc in location_chain:
+        geo = geocode_location(loc)
+        geocoded_chain.append(geo)
+
+    origin_geo = geocoded_chain[0]
+    dest_geo = geocoded_chain[-1]
+    stops_geo = geocoded_chain[1:-1] if len(geocoded_chain) > 2 else []
+
+    coords_list = [(g["longitude"], g["latitude"]) for g in geocoded_chain]
+
+    # Calculate Continuous Road Route via OSRM
     route_data = get_road_route(
         origin_lon=origin_geo["longitude"],
         origin_lat=origin_geo["latitude"],
         dest_lon=dest_geo["longitude"],
         dest_lat=dest_geo["latitude"],
-        origin_name=pickup_location,
-        dest_name=destination,
+        origin_name=origin_geo["name"],
+        dest_name=dest_geo["name"],
+        coords_list=coords_list,
     )
 
-    # 4. Construct Final Response Payload
     return {
         "origin": {
             "name": origin_geo["name"],
@@ -335,8 +386,25 @@ def calculate_street_route(pickup_location: str, destination: str) -> Dict[str, 
             "latitude": dest_geo["latitude"],
             "longitude": dest_geo["longitude"],
         },
+        "stops": [
+            {
+                "name": s["name"],
+                "latitude": s["latitude"],
+                "longitude": s["longitude"],
+            }
+            for s in stops_geo
+        ],
+        "waypoints": [
+            {
+                "name": g["name"],
+                "latitude": g["latitude"],
+                "longitude": g["longitude"],
+            }
+            for g in geocoded_chain
+        ],
         "distance_km": route_data["distance_km"],
         "duration_minutes": route_data["duration_minutes"],
         "route_geometry": route_data["route_geometry"],
         "route_summary": route_data.get("route_summary"),
     }
+

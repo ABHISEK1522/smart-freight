@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
@@ -27,8 +27,14 @@ import {
 export default function Sidebar() {
   const pathname = usePathname();
   const { user, logout, isAuthenticated } = useAuth();
+  const [mounted, setMounted] = useState(false);
 
-  const isDriver = user?.role === "driver" || pathname === "/driver";
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const activeAuth = mounted ? isAuthenticated : false;
+  const isDriver = mounted && (user?.role === "driver" || pathname === "/driver");
 
   const navigationItems = isDriver
     ? [
@@ -47,10 +53,15 @@ export default function Sidebar() {
       ];
 
   return (
-    <aside className="w-64 bg-[#FAF5EC] border-r border-[#E2D5C3] flex flex-col justify-between hidden md:flex shrink-0 select-none font-sans z-30 text-[#1F1D1A]">
-      <div>
-        {/* Top Brand Header */}
-        <div className="h-18 px-5 border-b border-[#E2D5C3] flex items-center justify-between bg-[#F4EBDD]">
+    <>
+      {/* Structural layout spacer to preserve main content width */}
+      <div className="w-64 shrink-0 hidden md:block pointer-events-none" aria-hidden="true" />
+
+      {/* Permanently Fixed Sidebar Navigation */}
+      <aside className="w-64 h-screen fixed top-0 left-0 bg-[#FAF5EC] border-r border-[#E2D5C3] flex flex-col justify-between hidden md:flex shrink-0 select-none font-sans z-40 text-[#1F1D1A]">
+        <div className="flex flex-col min-h-0 overflow-y-auto">
+          {/* Top Brand Header */}
+          <div className="h-18 px-5 border-b border-[#E2D5C3] flex items-center justify-between bg-[#F4EBDD] shrink-0 sticky top-0 z-10">
           <Link href="/" className="flex items-center gap-3 group">
             <div className="w-8 h-8 rounded-lg bg-[#C85A32] text-[#FFFFFF] flex items-center justify-center font-black text-sm shadow-sm group-hover:scale-105 transition-transform">
               SF
@@ -93,7 +104,7 @@ export default function Sidebar() {
       </div>
 
       {/* Corridor Telemetry & User Authentication Box */}
-      <div className="p-3 border-t border-[#E2D5C3] bg-[#F4EBDD]/60 space-y-3">
+      <div className="p-3 border-t border-[#E2D5C3] bg-[#F4EBDD]/60 space-y-3 shrink-0">
         {/* Live Corridor Status Badge */}
         <div className="p-3 bg-[#FAF5EC] border border-[#E2D5C3] rounded-xl font-mono text-[10px] space-y-1.5 shadow-xs">
           <div className="flex items-center justify-between text-[#5C5349]">
@@ -110,7 +121,7 @@ export default function Sidebar() {
         </div>
 
         {/* User / Auth State */}
-        {isAuthenticated ? (
+        {activeAuth ? (
           <div className="flex items-center justify-between px-2 text-xs">
             <div className="truncate">
               <div className="text-[#1F1D1A] font-bold truncate">{user?.name || "Dispatcher"}</div>
@@ -135,5 +146,6 @@ export default function Sidebar() {
         )}
       </div>
     </aside>
+  </>
   );
 }

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
+import CentralDamageIntelligencePanel from "@/components/CentralDamageIntelligencePanel";
 import {
   AlertOctagon,
   ShieldCheck,
@@ -189,6 +190,9 @@ export default function RiskAnalysisPage() {
                 ))}
               </div>
             </div>
+
+            {/* CENTRAL DAMAGE INTELLIGENCE & FUTURE MODEL 2 LEARNING PIPELINE */}
+            <CentralDamageIntelligencePanel apiBaseUrl={API_BASE_URL} />
 
           </div>
         </main>

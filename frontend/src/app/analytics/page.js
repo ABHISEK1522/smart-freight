@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
+import CentralDamageIntelligencePanel from "@/components/CentralDamageIntelligencePanel";
 import {
   BarChart3,
   TrendingUp,
@@ -137,6 +138,9 @@ export default function AnalyticsPage() {
                 ))}
               </div>
             </div>
+
+            {/* CENTRAL DAMAGE INTELLIGENCE & FUTURE MODEL 2 LEARNING PIPELINE */}
+            <CentralDamageIntelligencePanel />
 
           </div>
         </main>

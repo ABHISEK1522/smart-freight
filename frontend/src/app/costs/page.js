@@ -190,35 +190,140 @@ export default function CostSavingsPage() {
               </div>
             </div>
 
-            {/* Restrained Bar Chart Section */}
-            <div className="bg-[#FAF5EC] border border-[#E2D5C3] rounded-3xl p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-[#E2D5C3] pb-3">
-                <span className="text-xs font-bold font-mono text-[#1F1D1A] uppercase tracking-wider">
-                  Regional Cost Breakdown by Corridor Sector
-                </span>
-                <span className="text-[10px] text-[#8A7E70] font-mono font-bold">NH-16 ARTERIAL METRICS</span>
+            {/* CONSOLIDATED TRIPS & AI TRANSIT INTELLIGENCE */}
+            <div className="bg-[#FAF5EC] border border-[#E2D5C3] rounded-3xl p-6 sm:p-8 shadow-sm space-y-6">
+              <div className="flex flex-wrap items-center justify-between border-b border-[#E2D5C3] pb-4 gap-3 select-none">
+                <div>
+                  <div className="text-[9px] text-[#8A7E70] font-mono uppercase tracking-widest flex items-center gap-2 font-bold">
+                    <span className="w-2 h-2 rounded-full bg-[#C85A32]" />
+                    <span>REAL-TIME DISPATCH OPTIMIZATION</span>
+                  </div>
+                  <h2 className="text-xl font-black text-[#1F1D1A] tracking-tight mt-1">
+                    AI Transit & Consolidation Feasibility
+                  </h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono font-bold text-[#2D5224] px-3.5 py-1 bg-[#EBF3EA] border border-[#C4DEC0] rounded-full flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#2D5224] animate-pulse" />
+                    ● ML MODEL ACTIVE
+                  </span>
+                  <span className="text-[10px] font-mono text-[#8A7E70] hidden sm:inline">
+                    Random Forest • Indian Freight Transit Model
+                  </span>
+                </div>
               </div>
 
-              <div className="h-64 w-full pt-2">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E2D5C3" />
-                    <XAxis dataKey="name" stroke="#5C5349" fontSize={10} fontFamily="monospace" />
-                    <YAxis stroke="#5C5349" fontSize={10} fontFamily="monospace" />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "#FAF5EC",
-                        borderColor: "#E2D5C3",
-                        borderRadius: "12px",
-                        color: "#1F1D1A",
-                        fontFamily: "monospace",
-                        fontSize: "11px",
-                      }}
-                    />
-                    <Bar dataKey="separate" name="Separate Baseline" fill="#BA4336" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="consolidated" name="Smart Freight Consolidated" fill="#C85A32" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+              {/* Trip Cards */}
+              <div className="space-y-6">
+                {(data?.trips || []).map((trip, idx) => {
+                  const predTransit = trip.ai_predicted_transit_formatted || `${trip.estimated_duration_hours || 10.6} hrs`;
+                  const baseTransit = trip.baseline_transit_formatted || `${trip.baseline_duration_hours || 7.6} hrs`;
+                  const predEta = trip.predicted_eta_formatted || "Aug 16, 22:11";
+                  const slaDeadline = trip.sla_deadline_formatted || "Aug 17, 18:00";
+                  const slaBuffer = trip.sla_buffer_formatted || "19h 49m";
+                  const isFeasible = (trip.ai_decision || "FEASIBLE") === "FEASIBLE";
+                  const reasoning = trip.ai_reasoning || "AI predicts the consolidated route will reach all shipment deadlines with sufficient SLA buffer.";
+
+                  return (
+                    <div
+                      key={trip.trip_id || idx}
+                      className="p-5 sm:p-6 bg-[#FDFBF7] border border-[#E2D5C3] rounded-2xl space-y-5 font-mono shadow-xs"
+                    >
+                      {/* Trip Header */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E2D5C3] pb-3">
+                        <div className="flex items-center gap-2.5">
+                          <Truck className="w-4 h-4 text-[#C85A32]" />
+                          <span className="text-xs font-bold uppercase text-[#1F1D1A]">
+                            TRIP {trip.trip_id} // {trip.vehicle_type || "Refrigerated Linehaul"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#FAF4E8] text-[#C85A32] border border-[#E2D5C3]">
+                            {(trip.destinations || ["Kolkata"]).join(" → ")}
+                          </span>
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#EBF3EA] text-[#2D5224] border border-[#C4DEC0]">
+                            ₹{trip.savings?.toLocaleString() || "18,000"} SAVED ({trip.savings_percent || 50.0}%)
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* AI TRANSIT INTELLIGENCE SUB-CARD */}
+                      <div className="p-4 bg-[#FAF5EC] border border-[#E2D5C3] rounded-xl space-y-4">
+                        <div className="flex items-center justify-between border-b border-[#E2D5C3] pb-2 text-xs">
+                          <span className="font-bold text-[#1F1D1A] uppercase tracking-wider flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-[#C85A32]" />
+                            <span>AI TRANSIT INTELLIGENCE</span>
+                          </span>
+                          <span
+                            className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                              isFeasible
+                                ? "bg-[#EBF3EA] text-[#2D5224] border-[#C4DEC0]"
+                                : "bg-[#FDF0EA] text-[#BA4336] border-[#F5CABA]"
+                            }`}
+                          >
+                            {isFeasible ? "● AI FEASIBLE" : "✕ NOT FEASIBLE"}
+                          </span>
+                        </div>
+
+                        {/* Metric Row */}
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center text-xs">
+                          <div className="p-2.5 bg-[#FDFBF7] border border-[#E2D5C3] rounded-lg">
+                            <span className="text-[8px] text-[#8A7E70] uppercase font-bold block">AI Predicted Transit</span>
+                            <div className="text-sm font-black text-[#C85A32] mt-0.5">{predTransit}</div>
+                            <span className="text-[8px] text-[#8A7E70]">Empirical ML</span>
+                          </div>
+                          <div className="p-2.5 bg-[#FDFBF7] border border-[#E2D5C3] rounded-lg">
+                            <span className="text-[8px] text-[#8A7E70] uppercase font-bold block">Baseline Transit</span>
+                            <div className="text-sm font-black text-[#5C5349] mt-0.5">{baseTransit}</div>
+                            <span className="text-[8px] text-[#8A7E70]">50 km/h Heuristic</span>
+                          </div>
+                          <div className="p-2.5 bg-[#FDFBF7] border border-[#E2D5C3] rounded-lg">
+                            <span className="text-[8px] text-[#8A7E70] uppercase font-bold block">Predicted ETA</span>
+                            <div className="text-sm font-black text-[#1F1D1A] mt-0.5">{predEta}</div>
+                            <span className="text-[8px] text-[#4D6A42]">Destination Arrival</span>
+                          </div>
+                          <div className="p-2.5 bg-[#FDFBF7] border border-[#E2D5C3] rounded-lg">
+                            <span className="text-[8px] text-[#8A7E70] uppercase font-bold block">SLA Deadline</span>
+                            <div className="text-sm font-black text-[#1F1D1A] mt-0.5">{slaDeadline}</div>
+                            <span className="text-[8px] text-[#8A7E70]">Contract Target</span>
+                          </div>
+                          <div className={`p-2.5 rounded-lg border ${isFeasible ? "bg-[#EBF3EA] border-[#C4DEC0]" : "bg-[#FDF0EA] border-[#F5CABA]"}`}>
+                            <span className={`text-[8px] uppercase font-bold block ${isFeasible ? "text-[#2D5224]" : "text-[#BA4336]"}`}>
+                              SLA Buffer
+                            </span>
+                            <div className={`text-sm font-black mt-0.5 ${isFeasible ? "text-[#2D5224]" : "text-[#BA4336]"}`}>
+                              {slaBuffer}
+                            </div>
+                            <span className={`text-[8px] font-bold ${isFeasible ? "text-[#2D5224]" : "text-[#BA4336]"}`}>
+                              {isFeasible ? "Within Window" : "SLA Breach"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Difference & Explanation */}
+                        <div className="p-3 bg-[#FDFBF7] border border-[#E2D5C3] rounded-lg space-y-2 text-xs">
+                          <div className="flex flex-wrap items-center justify-between text-[11px] gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[#8A7E70]">50 km/h Baseline → <strong className="text-[#5C5349]">{baseTransit}</strong></span>
+                              <span className="text-[#C85A32]">→</span>
+                              <span className="text-[#C85A32] font-bold">AI Prediction → {predTransit}</span>
+                            </div>
+                            <span className="text-[10px] text-[#8A7E70] italic">
+                              "AI prediction is based on learned Indian freight transit patterns."
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between pt-2 border-t border-[#E2D5C3] text-[10px] text-[#5C5349] gap-2">
+                            <span><strong>AI Reasoning:</strong> {reasoning}</span>
+                            <span className="font-mono text-[#8A7E70] text-[9px] hidden lg:inline">
+                              ROUTE → ML ETA → SLA CHECK → RISK / SPOILAGE → CONSOLIDATION DECISION
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
