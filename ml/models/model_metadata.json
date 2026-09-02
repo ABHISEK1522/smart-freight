@@ -1,0 +1,145 @@
+{
+  "model_name": "Random Forest Regressor",
+  "input_features": [
+    "osrm_distance",
+    "osrm_time",
+    "osrm_speed_kmh",
+    "num_intermediate_stops",
+    "is_ftl",
+    "departure_hour",
+    "departure_dayofweek",
+    "is_weekend",
+    "is_night_dispatch",
+    "is_interstate",
+    "source_state",
+    "destination_state"
+  ],
+  "numeric_features": [
+    "osrm_distance",
+    "osrm_time",
+    "osrm_speed_kmh",
+    "num_intermediate_stops",
+    "is_ftl",
+    "departure_hour",
+    "departure_dayofweek",
+    "is_weekend",
+    "is_night_dispatch",
+    "is_interstate"
+  ],
+  "categorical_features": [
+    "source_state",
+    "destination_state"
+  ],
+  "target_variable": "actual_time",
+  "target_unit": "minutes",
+  "train_samples": 17926,
+  "val_samples": 3928,
+  "test_samples": 3806,
+  "test_metrics": [
+    {
+      "model_name": "Baseline A (50 km/h Heuristic)",
+      "mae_minutes": 51.64,
+      "rmse_minutes": 103.13,
+      "r2_score": 0.9004,
+      "medae_minutes": 24.95,
+      "mape_percent": 31.6,
+      "mae_hours": 0.86
+    },
+    {
+      "model_name": "Baseline B (OSRM Free-Flow)",
+      "mae_minutes": 94.16,
+      "rmse_minutes": 199.31,
+      "r2_score": 0.628,
+      "medae_minutes": 41.0,
+      "mape_percent": 49.18,
+      "mae_hours": 1.57
+    },
+    {
+      "model_name": "Baseline C (Train Median)",
+      "mae_minutes": 128.95,
+      "rmse_minutes": 341.31,
+      "r2_score": -0.0908,
+      "medae_minutes": 40.0,
+      "mape_percent": 67.14,
+      "mae_hours": 2.15
+    },
+    {
+      "model_name": "Ridge Linear Regression",
+      "mae_minutes": 36.04,
+      "rmse_minutes": 64.94,
+      "r2_score": 0.9605,
+      "medae_minutes": 20.92,
+      "mape_percent": 33.77,
+      "mae_hours": 0.6
+    },
+    {
+      "model_name": "Random Forest Regressor",
+      "mae_minutes": 26.11,
+      "rmse_minutes": 49.17,
+      "r2_score": 0.9774,
+      "medae_minutes": 14.68,
+      "mape_percent": 22.39,
+      "mae_hours": 0.44
+    },
+    {
+      "model_name": "HistGradientBoosting",
+      "mae_minutes": 30.73,
+      "rmse_minutes": 54.02,
+      "r2_score": 0.9727,
+      "medae_minutes": 18.31,
+      "mape_percent": 28.32,
+      "mae_hours": 0.51
+    },
+    {
+      "model_name": "XGBoost Regressor",
+      "mae_minutes": 28.06,
+      "rmse_minutes": 49.8,
+      "r2_score": 0.9768,
+      "medae_minutes": 16.58,
+      "mape_percent": 25.1,
+      "mae_hours": 0.47
+    }
+  ],
+  "top_features": [
+    {
+      "feature": "osrm_time",
+      "importance": 0.5734834968039603
+    },
+    {
+      "feature": "osrm_distance",
+      "importance": 0.38952125077035327
+    },
+    {
+      "feature": "num_intermediate_stops",
+      "importance": 0.01530903697694501
+    },
+    {
+      "feature": "osrm_speed_kmh",
+      "importance": 0.006955103518485858
+    },
+    {
+      "feature": "departure_hour",
+      "importance": 0.0033815754890144196
+    },
+    {
+      "feature": "departure_dayofweek",
+      "importance": 0.0011357789420894976
+    },
+    {
+      "feature": "destination_state_Assam",
+      "importance": 0.0009546490018298375
+    },
+    {
+      "feature": "source_state_Other",
+      "importance": 0.0009122400419915414
+    },
+    {
+      "feature": "is_interstate",
+      "importance": 0.000555404964734394
+    },
+    {
+      "feature": "destination_state_Delhi",
+      "importance": 0.0005461382557069334
+    }
+  ]
+}

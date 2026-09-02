@@ -125,6 +125,25 @@ def test_error_handling():
         print("  [PASS] Missing destination in POST correctly raised HTTP 400")
 
 
+def test_multi_stop_street_routing():
+    print("\n[TEST 5] Testing Multi-Stop Waypoint Road Routing...")
+    # Bhubaneswar -> Cuttack -> Jamshedpur -> Kolkata
+    res = routing_service.calculate_street_route(
+        pickup_location="Bhubaneswar",
+        destination="Kolkata",
+        stops=["Cuttack", "Jamshedpur"],
+    )
+    assert res["origin"]["name"] == "Bhubaneswar"
+    assert res["destination"]["name"] == "Kolkata"
+    assert len(res["stops"]) == 2
+    assert res["stops"][0]["name"] == "Cuttack"
+    assert res["stops"][1]["name"] == "Jamshedpur"
+    assert len(res["waypoints"]) == 4
+    assert res["distance_km"] > 450.0
+    assert len(res["route_geometry"]) > 500
+    print(f"  [PASS] Multi-stop road route: {res['distance_km']} km, {len(res['stops'])} intermediate stops")
+
+
 if __name__ == "__main__":
     print("=" * 65)
     print("SMART FREIGHT - REAL STREET ROUTING LAYER TEST RUNNER")
@@ -135,6 +154,7 @@ if __name__ == "__main__":
         test_calculate_street_route_service()
         test_api_handlers_direct()
         test_error_handling()
+        test_multi_stop_street_routing()
         print("\n" + "=" * 65)
         print(">>> ALL STREET ROUTING TESTS PASSED SUCCESSFULLY! <<<")
         print("=" * 65)
